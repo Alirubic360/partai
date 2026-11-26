@@ -10,6 +10,9 @@ class Settings:
     mode: str = "demo"  # "demo" uses canned providers; "live" calls OpenAI/SerpApi
     openai_api_key: str = ""
     serpapi_api_key: str = ""
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+    vision: str = ""                 # openai | gemini | local ; empty = auto from keys
     vision_model: str = "gpt-4o"
     whisper_model: str = "whisper-1"
     db_path: str = "data/partai.db"
@@ -30,6 +33,9 @@ class Settings:
             mode=e.get("PARTAI_MODE", "demo").lower(),
             openai_api_key=e.get("OPENAI_API_KEY", ""),
             serpapi_api_key=e.get("SERPAPI_API_KEY", ""),
+            gemini_api_key=e.get("GEMINI_API_KEY", ""),
+            gemini_model=e.get("PARTAI_GEMINI_MODEL", "gemini-2.0-flash"),
+            vision=e.get("PARTAI_VISION", "").lower(),
             vision_model=e.get("PARTAI_VISION_MODEL", "gpt-4o"),
             db_path=e.get("PARTAI_DB_PATH", "data/partai.db"),
             free_monthly_limit=int(e.get("PARTAI_FREE_MONTHLY_LIMIT", "10")),

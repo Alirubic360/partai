@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS tenants(
 CREATE TABLE IF NOT EXISTS items(
   id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, created_at TEXT NOT NULL,
   month TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS waitlist(
+  email TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_items_tenant_month ON items(tenant_id, month);
 """
 PLANS = {"free": 10, "pro": None, "enterprise": None}  # None = unlimited
@@ -85,6 +87,15 @@ class Store:
             cur = db.execute("INSERT INTO items(tenant_id,created_at,month,data) VALUES(?,?,?,?)",
                              (tenant["id"], datetime.now(timezone.utc).isoformat(), _month(), json.dumps(data)))
             return cur.lastrowid
+
+    def add_waitlist(self, email: str, source: str = "") -> None:
+        with self._tx() as db:
+            db.execute("INSERT OR IGNORE INTO waitlist(email,source,created_at) VALUES(?,?,?)",
+                       (email.lower(), source, datetime.now(timezone.utc).isoformat()))
+
+    def waitlist(self) -> list[dict]:
+        with self._tx() as db:
+            return [dict(r) for r in db.execute("SELECT email,source,created_at FROM waitlist ORDER BY created_at")]
 
     def get_item(self, tenant: dict, item_id: int) -> dict | None:
         with self._tx() as db:

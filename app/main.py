@@ -14,7 +14,8 @@ from .config import Settings
 from .export import to_ebay_csv, to_ebay_json, to_inventory_csv
 from .imageprep import BadImage, prepare_image
 from .pipeline import AnalysisError, Providers, analyze_part
-from .providers.demo import DemoPrices, DemoTranscriber, DemoVision
+from .providers.demo import DemoPrices, DemoTranscriber, DemoVision, NoPrices
+from .providers.gemini_client import GeminiVision
 from .providers.openai_client import OpenAIVision, OpenAIWhisper
 from .providers.serpapi_client import SerpApiEbay
 from .ratelimit import RateLimiter
@@ -27,12 +28,26 @@ _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{2,}$")
 
 def build_providers(cfg: Settings) -> Providers:
     if cfg.mode == "live":
-        if not (cfg.openai_api_key and cfg.serpapi_api_key):
-            raise RuntimeError("live mode needs OPENAI_API_KEY and SERPAPI_API_KEY")
-        return Providers(OpenAIVision(cfg.openai_api_key, cfg.vision_model, cfg.vision_timeout),
-                         OpenAIWhisper(cfg.openai_api_key, cfg.whisper_model),
-                         SerpApiEbay(cfg.serpapi_api_key, cfg.pricing_timeout), demo=False)
-    if cfg.mode == "local":  # free offline OCR for labels; prices still demo-grade
+        choice = cfg.vision or ("openai" if cfg.openai_api_key else "gemini" if cfg.gemini_api_key else "")
+        if not choice:
+            raise RuntimeError("live mode needs OPENAI_API_KEY or GEMINI_API_KEY (or PARTAI_VISION=local)")
+        if choice == "openai":
+            if not cfg.openai_api_key:
+                raise RuntimeError("live mode with openai vision needs OPENAI_API_KEY")
+            vision = OpenAIVision(cfg.openai_api_key, cfg.vision_model, cfg.vision_timeout)
+        elif choice == "gemini":
+            if not cfg.gemini_api_key:
+                raise RuntimeError("live mode with gemini vision needs GEMINI_API_KEY")
+            vision = GeminiVision(cfg.gemini_api_key, cfg.gemini_model, cfg.vision_timeout)
+        elif choice == "local":
+            from .providers.local_ocr import LocalOCRVision
+            vision = LocalOCRVision()
+        else:
+            raise RuntimeError(f"unknown PARTAI_VISION {choice!r}")
+        stt = OpenAIWhisper(cfg.openai_api_key, cfg.whisper_model) if cfg.openai_api_key else None
+        prices = SerpApiEbay(cfg.serpapi_api_key, cfg.pricing_timeout) if cfg.serpapi_api_key else NoPrices()
+        return Providers(vision, stt, prices, demo=False)
+    if cfg.mode == "local":  # free offline OCR for labels; prices are demo-grade samples
         from .providers.local_ocr import LocalOCRVision
         return Providers(LocalOCRVision(), None, DemoPrices(), demo=True)
     return Providers(DemoVision(), DemoTranscriber(), DemoPrices(), demo=True)
@@ -48,6 +63,11 @@ class PartPatch(BaseModel):
     brand: Optional[str] = None
     listing_title: Optional[str] = Field(None, max_length=80)
     price_avg: Optional[float] = Field(None, ge=0, le=100000)
+
+class WaitlistBody(BaseModel):
+    email: str
+    source: str = Field("", max_length=40)
+
 
 _PN_EDIT = re.compile(r"^[A-Z0-9][A-Z0-9\-./]{3,24}$")
 _PN_FLAGS = {"part_number_unreadable", "part_number_low_confidence", "part_number_ambiguous_chars"}
@@ -83,6 +103,19 @@ def create_app(cfg: Settings | None = None, providers: Providers | None = None,
             raise HTTPException(409, "email already registered")
         return {"api_key": key, "plan": "free", "monthly_limit": cfg.free_monthly_limit,
                 "note": "Store this key now; it cannot be shown again."}
+
+    @app.post("/api/v1/waitlist", status_code=201)
+    def waitlist(body: WaitlistBody, request: Request):
+        if not signup_rl.allow("wl:" + (request.client.host if request.client else "?")):
+            raise HTTPException(429, "too many requests; try again later")
+        if not _EMAIL.match(body.email):
+            raise HTTPException(422, "invalid email")
+        store.add_waitlist(body.email, re.sub(r"[^a-zA-Z0-9_-]", "", body.source))
+        return {"ok": True}   # same reply for new/duplicate: no email enumeration
+
+    @app.get("/landing")
+    def landing():
+        return FileResponse(STATIC / "landing.html")
 
     @app.get("/api/v1/me")
     def me(t: dict = Depends(tenant)):

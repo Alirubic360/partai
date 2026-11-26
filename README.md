@@ -12,6 +12,7 @@ Separate product from the AutoRankLab WordPress site; nothing here touches the s
 | Offline OCR mode (`PARTAI_MODE=local`) | built; measured on **synthetic** labels only (see below) |
 | Technician confirm/correct step (PWA + `PATCH /api/v1/parts/{id}`), rate limits | built, tested |
 | Dockerfile, GitHub Actions CI | written; **not run** (no Docker here; CI runs on first push) |
+| Gemini vision provider, in-browser dictation, `/landing` waitlist page | built; Gemini tested with **mocked** HTTP only; dictation not testable headless (try in phone Chrome) |
 | Billing (Stripe), email verification, HTTPS/hosting | **not built** |
 
 ## Run
@@ -73,3 +74,15 @@ preprocessing and publishes a part number only when both passes agree (cut wrong
 Remaining failures are consistent truncations/digit slips that survive both passes. That is why the
 PWA shows the part number in an editable field with a "Confirm" button: **a human must check the P/N
 against the label before listing.** Do not auto-publish from OCR output alone.
+
+## Zero-cost setup
+| Need | Free option |
+|---|---|
+| Read labels | `PARTAI_MODE=local` (offline OCR, no key) |
+| Vision model | `PARTAI_MODE=live PARTAI_VISION=gemini GEMINI_API_KEY=...` (free key at aistudio.google.com/apikey; check current quota) |
+| Voice note | Browser dictation button (Chrome) fills the note field; no Whisper needed |
+| Prices | none yet: with no `SERPAPI_API_KEY` live mode returns **no price + a flag**, never invented numbers |
+| Early-access page | `/landing?src=reddit`; list emails with `python -m app.admin waitlist` |
+
+Live mode picks OpenAI if `OPENAI_API_KEY` is set, else Gemini; override with `PARTAI_VISION=openai|gemini|local`.
+Live mode with no vision key refuses to start instead of silently degrading.

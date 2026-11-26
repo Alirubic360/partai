@@ -36,3 +36,9 @@ class DemoPrices:
     async def search(self, query: str) -> list[Comp]:
         await asyncio.sleep(self.delay)
         return [Comp(title=f"{query} sample", price=p, sold=True) for p in self.prices]
+
+
+class NoPrices:
+    """Used in live mode without a price key: honest 'no data' instead of invented prices."""
+    async def search(self, query: str) -> list[Comp]:
+        return []

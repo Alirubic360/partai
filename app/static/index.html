@@ -35,6 +35,7 @@ img{max-width:100%;border-radius:8px}.banner{background:var(--warn);color:#2b1a0
   <img id="preview" alt="Part photo preview" hidden>
   <button class="sec" id="rec">Record 10s voice note (optional)</button>
   <small id="recstat" class="mut"></small>
+  <button class="sec" id="dictate" hidden>Dictate note (free, in-browser)</button>
   <input id="note" type="text" placeholder="or type: tested working, from Bosch series 8 washer">
   <button id="go" disabled>Analyze part</button>
   <div id="out"></div>
@@ -63,6 +64,11 @@ $("rec").onclick=async()=>{try{
   const s=await navigator.mediaDevices.getUserMedia({audio:true});const mr=new MediaRecorder(s);const ch=[];
   mr.ondataavailable=e=>ch.push(e.data);mr.onstop=()=>{voice=new Blob(ch,{type:mr.mimeType});s.getTracks().forEach(t=>t.stop());$("recstat").textContent="Voice note saved"};
   mr.start();$("recstat").textContent="Recording... 10s";setTimeout(()=>{if(mr.state!=="inactive")mr.stop()},10000)}catch(e){$("recstat").textContent="Microphone unavailable - type a note instead"}};
+(function(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR)return;
+  const b=$("dictate");b.hidden=false;b.onclick=()=>{const r=new SR();r.lang="en-US";r.interimResults=false;
+    r.onresult=e=>{$("note").value=(($("note").value?$("note").value+" ":"")+e.results[0][0].transcript).trim()};
+    r.onerror=()=>{$("recstat").textContent="Dictation unavailable - type the note"};
+    r.onstart=()=>{$("recstat").textContent="Listening..."};r.onend=()=>{$("recstat").textContent=""};r.start()}})();
 $("go").onclick=async()=>{const fd=new FormData();fd.append("image",photo);if(voice)fd.append("audio",voice,"note.webm");fd.append("note",$("note").value);
   $("go").disabled=true;$("out").innerHTML='<p class="mut">Analyzing...</p>';
   try{const r=await fetch("/api/v1/parts/analyze",{method:"POST",headers:H(),body:fd});const j=await r.json();

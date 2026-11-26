@@ -165,3 +165,30 @@ def test_rate_limits():
     assert c.post("/api/v1/signup", json={"email": "c@x.com"}).status_code == 429
     assert analyze(c, h).status_code == 200 and analyze(c, h).status_code == 200
     assert analyze(c, h).status_code == 429
+
+
+def test_provider_selection():
+    from app.main import build_providers
+    from app.providers.gemini_client import GeminiVision
+    from app.providers.openai_client import OpenAIVision
+    from app.providers.demo import NoPrices
+    p = build_providers(Settings(mode="live", gemini_api_key="g"))
+    assert isinstance(p.vision, GeminiVision) and isinstance(p.prices, NoPrices) and not p.demo
+    assert isinstance(build_providers(Settings(mode="live", openai_api_key="o", gemini_api_key="g")).vision, OpenAIVision)
+    with pytest.raises(RuntimeError):
+        build_providers(Settings(mode="live", vision="gemini"))
+
+
+def test_no_prices_means_honest_flag_not_invented_numbers():
+    from app.providers.demo import NoPrices
+    c = TestClient(create_app(Settings(db_path=":memory:"),
+                              Providers(DemoVision(), None, NoPrices()), Store(":memory:", 10)))
+    j = analyze(c, key_for(c)).json()
+    assert j["estimated_price_usd"]["avg"] == 0 and "no_price_comps_found" in j["flags"] and j["needs_review"]
+
+
+def test_waitlist_and_landing(client):
+    assert "PartAi" in client.get("/landing").text
+    assert client.post("/api/v1/waitlist", json={"email": "x@y.com", "source": "reddit"}).status_code == 201
+    assert client.post("/api/v1/waitlist", json={"email": "X@y.com"}).status_code == 201   # duplicate: same reply
+    assert client.post("/api/v1/waitlist", json={"email": "bad"}).status_code == 422

@@ -311,3 +311,30 @@ def test_local_ocr_parse():
     assert none.part_number == "" and none.legibility == "none"
     blurry = parse_ocr([("P/N: 00145787", .93)], blur=5)
     assert blurry.part_number_confidence < 0.75   # sharpness discount pushes it to review
+
+
+# ---------- Gemini client ----------
+def test_gemini_parses_and_sends_expected_request():
+    from app.providers.gemini_client import GeminiVision
+    seen = {}
+
+    def handler(req):
+        seen["url"], seen["key"], seen["body"] = str(req.url), req.headers["x-goog-api-key"], json.loads(req.content)
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(VISION_JSON)}]}}]})
+
+    res = run(GeminiVision("g-test", client=mock_client(handler)).analyze(b"img", "hint"))
+    assert res.part_number == "00145787" and seen["key"] == "g-test"
+    assert "key=" not in seen["url"]                       # key goes in a header, never the URL
+    assert seen["body"]["generationConfig"]["temperature"] == 0
+    assert "NEVER guess" in seen["body"]["systemInstruction"]["parts"][0]["text"]
+    assert seen["body"]["contents"][0]["parts"][1]["inline_data"]["mime_type"] == "image/jpeg"
+
+
+@pytest.mark.parametrize("resp", [
+    httpx.Response(429, json={"error": {}}), httpx.Response(200, json={"candidates": []}),
+    httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "nope"}]}}]}),
+])
+def test_gemini_errors_are_provider_errors(resp):
+    from app.providers.gemini_client import GeminiVision
+    with pytest.raises(ProviderError):
+        run(GeminiVision("k", client=mock_client(lambda r: resp)).analyze(b"x"))

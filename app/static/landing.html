@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PartAi - List used appliance parts in 90 seconds</title>
+<meta name="description" content="Snap a photo of a used appliance part. Get an eBay-ready title, description and price range. Early access for repair shops.">
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--fg:#e2e8f0;--mut:#94a3b8;--ac:#38bdf8}
+@media(prefers-color-scheme:light){:root{--bg:#f1f5f9;--card:#fff;--fg:#0f172a;--mut:#475569}}
+*{box-sizing:border-box}body{margin:0;font:17px/1.55 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:680px;margin:0 auto;padding:24px 16px 64px}h1{font-size:2rem;line-height:1.15;margin:.6em 0 .3em}
+.mut{color:var(--mut)}.card{background:var(--card);border-radius:14px;padding:18px;margin:18px 0}
+ol{padding-left:1.2em}li{margin:.4em 0}
+form{display:flex;gap:8px;flex-wrap:wrap}input[type=email]{flex:1 1 220px;padding:14px;border-radius:10px;border:1px solid var(--mut);background:transparent;color:var(--fg);font-size:1rem}
+button{background:var(--ac);color:#04283b;border:0;border-radius:10px;padding:14px 20px;font-size:1rem;font-weight:700;cursor:pointer}
+button:disabled{opacity:.6}#msg{min-height:1.4em;margin:.6em 0 0}
+.honest{border-left:4px solid var(--ac);padding-left:12px}
+</style></head><body><main>
+<p class="mut">PartAi &middot; early access</p>
+<h1>Stop typing part numbers by hand.</h1>
+<p>Photograph a used appliance part. PartAi reads the label, drafts an eBay title and description, and shows a price range from similar listings. You check the part number, then export.</p>
+
+<div class="card">
+  <strong>Get early access</strong>
+  <p class="mut">Built for appliance and HVAC repair shops that resell used parts. Free tier planned. No spam.</p>
+  <form id="f"><input id="e" type="email" required placeholder="you@yourshop.com" autocomplete="email" aria-label="Email address">
+  <button id="b">Join the list</button></form><p id="msg" role="status"></p>
+</div>
+
+<div class="card"><strong>How it works</strong>
+<ol><li>Take a photo of the part or its label (add a 10-second voice note if you like).</li>
+<li>PartAi reads the brand, part number and model, and drafts the listing.</li>
+<li>You confirm the part number, then download a CSV for eBay or your inventory sheet.</li></ol></div>
+
+<div class="card honest"><strong>What it does not do</strong>
+<p class="mut">It does not guarantee a part fits or that it works. It never guesses a blurry part number: it flags it for you to check. Prices are estimates from comparable listings, not promises of what a part will sell for. The product is in testing, so features may change.</p></div>
+</main>
+<script>
+const f=document.getElementById("f"),m=document.getElementById("msg"),b=document.getElementById("b");
+const src=(new URLSearchParams(location.search).get("src")||"").slice(0,40);
+f.onsubmit=async ev=>{ev.preventDefault();b.disabled=true;m.textContent="";
+  try{const r=await fetch("/api/v1/waitlist",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:document.getElementById("e").value,source:src})});
+    if(r.ok){m.textContent="You're on the list. Thank you!";f.reset()}else{const j=await r.json();m.textContent=j.detail||"Something went wrong."}}
+  catch(e){m.textContent="Network error. Please try again."}b.disabled=false};
+</script></body></html>
