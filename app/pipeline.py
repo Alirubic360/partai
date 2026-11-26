@@ -18,6 +18,9 @@ from .providers.base import PriceProvider, ProviderError, Transcriber, VisionPro
 from .schemas import AnalysisResult, NoteFacts, PricingInfo, VisionResult
 
 _PN_OK = re.compile(r"^[A-Z0-9][A-Z0-9\-./]{3,24}$")
+# letters that OCR/vision commonly swap with digits (I/1, O/0, S/5, B/8, Z/2) sitting next to a digit
+_AMBIGUOUS = re.compile(r"(?<=\d)[IOSBZ]|[IOSBZ](?=\d)")
+AMBIGUOUS_MIN_CONF = 0.9
 
 
 class AnalysisError(RuntimeError):
@@ -86,6 +89,9 @@ async def analyze_part(image_jpeg: bytes, audio: bytes | None, audio_name: str, 
         pn_for_listing = "" if (not pn or vision_res.legibility in ("blurry", "none")) else pn
     else:
         pn_for_listing = pn
+    if (pn_for_listing and _AMBIGUOUS.search(pn_for_listing)
+            and vision_res.part_number_confidence < AMBIGUOUS_MIN_CONF):
+        flags.append("part_number_ambiguous_chars")   # e.g. W1I81723 - is that I a 1?
     if not vision_res.brand:
         flags.append("brand_not_detected")
     if not vision_res.part_name:
@@ -131,8 +137,8 @@ async def analyze_part(image_jpeg: bytes, audio: bytes | None, audio_name: str, 
         estimated_price_usd=pricing.estimated_price_usd,
         shipping_weight_estimate=shipping_weight(vision_res),
         needs_review=bool(set(flags) & {
-            "part_number_unreadable", "part_number_low_confidence", "brand_not_detected",
-            "part_name_not_detected", "no_price_comps_found", "price_from_fuzzy_query"}),
+            "part_number_unreadable", "part_number_low_confidence", "part_number_ambiguous_chars",
+            "brand_not_detected", "no_price_comps_found", "price_from_fuzzy_query"}),
         flags=sorted(set(flags)),
         price_confidence=pricing.confidence,
         price_sample_size=pricing.sample_size,

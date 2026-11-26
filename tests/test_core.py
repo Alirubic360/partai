@@ -280,3 +280,34 @@ def test_export_csv_formula_injection_neutralised():
     inv = to_inventory_csv([r])
     assert "'=HYPERLINK" in inv and ",=HYPERLINK" not in inv
     assert "Add" in to_ebay_csv([r])
+
+
+# ---------- ambiguity gate + local OCR parsing ----------
+def test_ambiguous_chars_flagged_unless_very_confident():
+    sus = V.model_copy(update={"part_number": "W1I81723", "part_number_confidence": 0.8})
+    r = run(analyze_part(IMG, None, "", "", providers(DemoVision(sus)), CFG))
+    assert "part_number_ambiguous_chars" in r.flags and r.needs_review
+    sure = sus.model_copy(update={"part_number_confidence": 0.97})
+    assert "part_number_ambiguous_chars" not in run(analyze_part(IMG, None, "", "", providers(DemoVision(sure)), CFG)).flags
+    clean = V.model_copy(update={"part_number": "DC92-58887", "part_number_confidence": 0.8})
+    assert "part_number_ambiguous_chars" not in run(analyze_part(IMG, None, "", "", providers(DemoVision(clean)), CFG)).flags
+
+
+def test_missing_part_name_is_warning_not_blocker():
+    v = V.model_copy(update={"part_name": ""})
+    r = run(analyze_part(IMG, None, "", "", providers(DemoVision(v)), CFG))
+    assert "part_name_not_detected" in r.flags and not r.needs_review
+
+
+def test_local_ocr_parse():
+    from app.providers.local_ocr import parse_ocr
+    lines = [("BOSCH", .99), ("Drain Pmp", .95), ("P/N: 00145787", .93), ("MODEL: WAE24060UC", .9)]
+    v = parse_ocr(lines, blur=200)
+    assert (v.brand, v.part_name, v.part_number) == ("Bosch", "Drain Pump", "00145787")
+    assert v.model_numbers == ["WAE24060UC"] and v.legibility == "clear"
+    split = parse_ocr([("P/N", .9), ("DC92-00001A", .88)], blur=200)   # label and value on separate lines
+    assert split.part_number == "DC92-00001A"
+    none = parse_ocr([], blur=0)
+    assert none.part_number == "" and none.legibility == "none"
+    blurry = parse_ocr([("P/N: 00145787", .93)], blur=5)
+    assert blurry.part_number_confidence < 0.75   # sharpness discount pushes it to review

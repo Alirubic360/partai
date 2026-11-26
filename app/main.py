@@ -30,6 +30,9 @@ def build_providers(cfg: Settings) -> Providers:
         return Providers(OpenAIVision(cfg.openai_api_key, cfg.vision_model, cfg.vision_timeout),
                          OpenAIWhisper(cfg.openai_api_key, cfg.whisper_model),
                          SerpApiEbay(cfg.serpapi_api_key, cfg.pricing_timeout), demo=False)
+    if cfg.mode == "local":  # free offline OCR for labels; prices still demo-grade
+        from .providers.local_ocr import LocalOCRVision
+        return Providers(LocalOCRVision(), None, DemoPrices(), demo=True)
     return Providers(DemoVision(), DemoTranscriber(), DemoPrices(), demo=True)
 
 

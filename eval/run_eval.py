@@ -33,7 +33,7 @@ async def evaluate(labels: list[dict], base: Path, providers, cfg: Settings) -> 
         lat.append(time.perf_counter() - t)
         truth = normalize_part_number(item["part_number"])
         flagged = res.needs_review or not res.part_number
-        rows.append({"image": item["image"], "truth": truth, "got": res.part_number,
+        rows.append({"image": item["image"], "difficulty": item.get("difficulty", "all"), "truth": truth, "got": res.part_number,
                      "match": res.part_number == truth, "flagged": flagged,
                      "brand_ok": res.brand.lower() == item.get("brand", res.brand).lower()})
     n = len(rows)
@@ -49,6 +49,11 @@ async def evaluate(labels: list[dict], base: Path, providers, cfg: Settings) -> 
         "wrong_but_published": len(wrong_pub),
         "latency_p50_s": round(statistics.median(lat_s), 3) if lat_s else None,
         "latency_p95_s": round(lat_s[min(n - 1, int(0.95 * n))], 3) if lat_s else None,
+        "by_difficulty": {d: {"n": len(g), "pn_match": round(sum(x["match"] for x in g) / len(g), 3),
+                              "flagged": round(sum(x["flagged"] for x in g) / len(g), 3),
+                              "wrong_but_published": sum((not x["flagged"]) and (not x["match"]) for x in g)}
+                          for d in sorted({r["difficulty"] for r in rows})
+                          for g in [[r for r in rows if r["difficulty"] == d]]},
         "errors": [r for r in rows if not r["match"]][:10],
     }
 

@@ -8,7 +8,8 @@ Separate product from the AutoRankLab WordPress site; nothing here touches the s
 |---|---|
 | FastAPI backend, quota/plans, exports, PWA | built, tested (46 tests) |
 | OpenAI Vision / Whisper / SerpApi clients | built, tested against **mocked** HTTP only |
-| Live accuracy (the "99%" goal) | **not measured** — needs real keys + labeled photos (`eval/run_eval.py`) |
+| Live accuracy with GPT-4o (the "99%" goal) | **not measured** — needs real keys + real labeled photos |
+| Offline OCR mode (`PARTAI_MODE=local`) | built; measured on **synthetic** labels only (see below) |
 | Billing (Stripe), email verification, rate limiting | **not built** |
 
 ## Run
@@ -37,3 +38,20 @@ Open http://localhost:8000 on a phone (HTTPS required for camera/mic outside loc
 ## Measure real accuracy
 Put 100+ real photos + `labels.json` in a folder, then `python -m eval.run_eval DIR --live`.
 Watch `wrong_but_published`: unflagged wrong part numbers are the metric that costs money.
+
+## Offline OCR mode (free, no API keys)
+`pip install -r requirements-local.txt` then `PARTAI_MODE=local`. Reads printed label text only
+(brand, P/N, model, part name); cannot judge condition. Prices are still demo until SerpApi is set.
+
+Benchmark on **synthetic** label images (`python -m eval.make_synthetic DIR N SEED`, then
+`PARTAI_MODE=local python -m eval.run_eval DIR`). Seed 99 / 200 images was never used for tuning:
+
+| Difficulty | P/N read correctly | Sent to review | Wrong P/N published |
+|---|---|---|---|
+| clean | 100% | 6% | 0 |
+| slight blur | 100% | 4% | 0 |
+| heavy blur | 52% | 72% | 0 |
+| unreadable | 0% | 100% | 0 |
+
+Latency ~0.2 s/image. Synthetic labels are cleaner than real parts (no glare, grime, curved or
+embossed text), so real-world numbers will be lower. Measure on real photos before trusting it.
