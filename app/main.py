@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
+from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import Settings
 from .export import to_ebay_csv, to_ebay_json, to_inventory_csv
@@ -16,6 +17,7 @@ from .pipeline import AnalysisError, Providers, analyze_part
 from .providers.demo import DemoPrices, DemoTranscriber, DemoVision
 from .providers.openai_client import OpenAIVision, OpenAIWhisper
 from .providers.serpapi_client import SerpApiEbay
+from .ratelimit import RateLimiter
 from .schemas import AnalysisResult
 from .store import Store
 
@@ -40,12 +42,25 @@ class SignupBody(BaseModel):
     email: str
 
 
+class PartPatch(BaseModel):
+    """Technician corrections. Any edit marks the item confirmed."""
+    part_number: Optional[str] = None
+    brand: Optional[str] = None
+    listing_title: Optional[str] = Field(None, max_length=80)
+    price_avg: Optional[float] = Field(None, ge=0, le=100000)
+
+_PN_EDIT = re.compile(r"^[A-Z0-9][A-Z0-9\-./]{3,24}$")
+_PN_FLAGS = {"part_number_unreadable", "part_number_low_confidence", "part_number_ambiguous_chars"}
+
+
 def create_app(cfg: Settings | None = None, providers: Providers | None = None,
                store: Store | None = None) -> FastAPI:
     cfg = cfg or Settings.from_env()
     providers = providers or build_providers(cfg)
     store = store or Store(cfg.db_path, cfg.free_monthly_limit)
     app = FastAPI(title="PartAi", version="0.1.0")
+    signup_rl = RateLimiter(cfg.signup_per_hour, 3600)
+    analyze_rl = RateLimiter(cfg.analyze_per_minute, 60)
 
     def tenant(x_api_key: str = Header(default="")) -> dict:
         t = store.tenant_by_key(x_api_key) if x_api_key else None
@@ -58,7 +73,9 @@ def create_app(cfg: Settings | None = None, providers: Providers | None = None,
         return {"status": "ok", "mode": cfg.mode, "demo": providers.demo}
 
     @app.post("/api/v1/signup", status_code=201)
-    def signup(body: SignupBody):
+    def signup(body: SignupBody, request: Request):
+        if not signup_rl.allow(request.client.host if request.client else "?"):
+            raise HTTPException(429, "too many signups from this address; try again later")
         if not _EMAIL.match(body.email):
             raise HTTPException(422, "invalid email")
         key = store.create_tenant(body.email)
@@ -74,6 +91,8 @@ def create_app(cfg: Settings | None = None, providers: Providers | None = None,
     @app.post("/api/v1/parts/analyze", response_model=AnalysisResult)
     async def analyze(image: UploadFile = File(...), audio: UploadFile | None = File(None),
                       note: str = Form(""), t: dict = Depends(tenant)):
+        if not analyze_rl.allow(str(t["id"])):
+            raise HTTPException(429, "too many requests; max %d per minute" % cfg.analyze_per_minute)
         u = store.usage(t)
         if u["remaining"] == 0:
             raise HTTPException(402, f"Free plan limit reached ({u['monthly_limit']} parts/month). Upgrade to Pro.")
@@ -94,8 +113,36 @@ def create_app(cfg: Settings | None = None, providers: Providers | None = None,
             result = await analyze_part(jpeg, audio_bytes, audio_name, note[:500], providers, cfg)
         except AnalysisError as exc:
             raise HTTPException(502, f"analysis unavailable: {exc}")
-        store.add_item(t, result.model_dump())  # quota is consumed only on success
+        result.id = store.add_item(t, result.model_dump(exclude={"id"}))  # quota is consumed only on success
         return result
+
+    @app.patch("/api/v1/parts/{item_id}")
+    def correct(item_id: int, patch: PartPatch, t: dict = Depends(tenant)):
+        item = store.get_item(t, item_id)
+        if not item:
+            raise HTTPException(404, "item not found")
+        if patch.part_number is not None:
+            pn = re.sub(r"\s+", "", patch.part_number).upper()
+            if not _PN_EDIT.match(pn):
+                raise HTTPException(422, "part number must be 4-25 chars: letters, digits, - . /")
+            item["part_number"] = pn
+            item["flags"] = [f for f in item["flags"] if f not in _PN_FLAGS]
+        if patch.brand is not None:
+            item["brand"] = patch.brand.strip()[:40]
+        if patch.listing_title is not None:
+            item["listing_title"] = patch.listing_title.strip()
+        if patch.price_avg is not None:
+            p = item["estimated_price_usd"]
+            old = p["avg"]
+            ratio = patch.price_avg / old if old else 1.0
+            p["avg"] = round(patch.price_avg, 2)
+            p["low"] = round(min(p["low"] * ratio if old else patch.price_avg, patch.price_avg), 2)
+            p["high"] = round(max(p["high"] * ratio if old else patch.price_avg, patch.price_avg), 2)
+            item["flags"] = [f for f in item["flags"] if not f.startswith("pricing_") and f != "no_price_comps_found"]
+        item["confirmed"] = True
+        item["needs_review"] = False
+        store.update_item(t, item_id, {k: v for k, v in item.items() if k not in ("id", "created_at")})
+        return item
 
     @app.get("/api/v1/parts")
     def parts(t: dict = Depends(tenant)):

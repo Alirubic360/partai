@@ -96,11 +96,40 @@ class LocalOCRVision:
         return await asyncio.to_thread(self._run, image_jpeg)
 
     def _run(self, jpeg: bytes) -> VisionResult:
+        """Read twice with different preprocessing; publish a part number only if both agree.
+
+        OCR slips (dropped trailing digits, one wrong digit) are usually NOT stable across
+        preprocessing, while true reads are. A disagreement is returned with low confidence
+        so the pipeline's trust gate sends it to human review instead of publishing it.
+        """
         try:
             import numpy as np
             img = Image.open(io.BytesIO(jpeg)).convert("RGB")
-            result, _ = _engine()(np.asarray(img))
+            first = self._read(img)
+            alt = self._read(self._variant(img))
         except Exception as exc:
             raise ProviderError(f"local OCR failed: {exc.__class__.__name__}") from exc
-        lines = [(str(r[1]), float(r[2])) for r in (result or [])]
-        return parse_ocr(lines, sharpness(img))
+        blur = sharpness(img)
+        a, b = parse_ocr(first, blur), parse_ocr(alt, blur)
+        if a.part_number and a.part_number == b.part_number:
+            a.part_number_confidence = min(a.part_number_confidence, b.part_number_confidence)
+            return a
+        if a.part_number or b.part_number:   # disagree, or only one pass found it
+            pick = a if a.part_number else b
+            pick.part_number_confidence = min(pick.part_number_confidence, 0.4)
+            pick.legibility = "partial"
+            return pick
+        return a if (a.brand or a.part_name) else b
+
+    @staticmethod
+    def _read(img: Image.Image) -> list[tuple[str, float]]:
+        import numpy as np
+        result, _ = _engine()(np.asarray(img))
+        return [(str(r[1]), float(r[2])) for r in (result or [])]
+
+    @staticmethod
+    def _variant(img: Image.Image) -> Image.Image:
+        from PIL import ImageOps
+        g = ImageOps.autocontrast(img.convert("L"), cutoff=2)
+        g = g.resize((int(g.width * 1.5), int(g.height * 1.5)), Image.LANCZOS)
+        return g.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=3)).convert("RGB")

@@ -71,3 +71,5 @@ class AnalysisResult(BaseModel):
     timings_ms: dict[str, int] = {}
     demo: bool = False
     currency: str = "USD"
+    id: Optional[int] = None          # saved item id (for corrections/export)
+    confirmed: bool = False           # a human checked/edited this item

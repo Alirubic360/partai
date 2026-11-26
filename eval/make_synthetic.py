@@ -2,7 +2,7 @@
 
 Synthetic != real. Real photos have glare, curved surfaces, grime, embossed text. Treat results
 as a floor-check of the pipeline and the blur gate, not as field accuracy.
-Usage: python -m eval.make_synthetic OUT_DIR [N] [SEED]
+Usage: python -m eval.make_synthetic OUT_DIR [N] [SEED] [--hard]
 """
 from __future__ import annotations
 
@@ -52,7 +52,24 @@ def render(rng: random.Random, brand, part, pn, model, blur, rot, noise) -> Imag
     return img
 
 
-def main(out: str, n: int = 120, seed: int = 7) -> None:
+def harden(rng: random.Random, img: Image.Image) -> Image.Image:
+    """Field-like damage: glare hotspot, perspective skew, low resolution, heavy JPEG, dark vignette."""
+    import numpy as np
+    w, h = img.size
+    a = np.asarray(img).astype("float32")
+    yy, xx = np.mgrid[0:h, 0:w]
+    cx, cy, r = rng.randint(200, 700), rng.randint(100, 450), rng.randint(60, 140)
+    glare = np.exp(-(((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * r * r)))[..., None] * rng.uniform(120, 230)
+    vig = 1 - 0.35 * (((xx - w / 2) ** 2 + (yy - h / 2) ** 2) / ((w / 2) ** 2 + (h / 2) ** 2))[..., None]
+    img = Image.fromarray(np.clip(a * vig + glare, 0, 255).astype("uint8"))
+    k = rng.uniform(0.0004, 0.0012)   # perspective: tilt the plane like a hand-held shot
+    coeffs = (1, rng.uniform(-0.08, 0.08), 0, rng.uniform(-0.08, 0.08), 1, 0, k * rng.choice([-1, 1]), k * rng.choice([-1, 1]))
+    img = img.transform((w, h), Image.PERSPECTIVE, coeffs, Image.BICUBIC, fillcolor=(120, 120, 120))
+    f = rng.uniform(0.45, 0.8)         # low-res phone / cropped digital zoom
+    return img.resize((int(w * f), int(h * f))).resize((w, h))
+
+
+def main(out: str, n: int = 120, seed: int = 7, hard: bool = False) -> None:
     rng, base = random.Random(seed), Path(out)
     base.mkdir(parents=True, exist_ok=True)
     labels = []
@@ -63,8 +80,10 @@ def main(out: str, n: int = 120, seed: int = 7) -> None:
         level, blur = LEVELS[i % 4]
         img = render(rng, brand, part, pn, model, blur * rng.uniform(0.85, 1.15),
                      rng.uniform(-6, 6), rng.choice([0, 6, 14]))
+        if hard:
+            img = harden(rng, img)
         name = f"{i:03d}_{level}.jpg"
-        img.save(base / name, quality=rng.randint(70, 92))
+        img.save(base / name, quality=rng.randint(35, 60) if hard else rng.randint(70, 92))
         labels.append({"image": name, "part_number": pn, "brand": brand, "model": model, "difficulty": level})
     (base / "labels.json").write_text(json.dumps(labels, indent=1))
     print(f"wrote {n} images + labels.json to {base}")
@@ -72,4 +91,5 @@ def main(out: str, n: int = 120, seed: int = 7) -> None:
 
 if __name__ == "__main__":
     a = sys.argv[1:]
-    main(a[0], int(a[1]) if len(a) > 1 else 120, int(a[2]) if len(a) > 2 else 7)
+    nums = [x for x in a[1:] if x.isdigit()]
+    main(a[0], int(nums[0]) if nums else 120, int(nums[1]) if len(nums) > 1 else 7, "--hard" in a)

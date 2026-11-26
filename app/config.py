@@ -18,6 +18,8 @@ class Settings:
     vision_timeout: float = 11.0
     pricing_timeout: float = 8.0
     part_number_min_confidence: float = 0.75
+    signup_per_hour: int = 5
+    analyze_per_minute: int = 30
     max_image_bytes: int = 10 * 1024 * 1024
     max_audio_bytes: int = 5 * 1024 * 1024
 

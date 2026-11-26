@@ -10,7 +10,9 @@ Separate product from the AutoRankLab WordPress site; nothing here touches the s
 | OpenAI Vision / Whisper / SerpApi clients | built, tested against **mocked** HTTP only |
 | Live accuracy with GPT-4o (the "99%" goal) | **not measured** — needs real keys + real labeled photos |
 | Offline OCR mode (`PARTAI_MODE=local`) | built; measured on **synthetic** labels only (see below) |
-| Billing (Stripe), email verification, rate limiting | **not built** |
+| Technician confirm/correct step (PWA + `PATCH /api/v1/parts/{id}`), rate limits | built, tested |
+| Dockerfile, GitHub Actions CI | written; **not run** (no Docker here; CI runs on first push) |
+| Billing (Stripe), email verification, HTTPS/hosting | **not built** |
 
 ## Run
 ```bash
@@ -25,6 +27,8 @@ Open http://localhost:8000 on a phone (HTTPS required for camera/mic outside loc
 - `POST /api/v1/signup {email}` -> key (shown once) · `GET /api/v1/me` -> plan + usage
 - `POST /api/v1/parts/analyze` multipart: `image`, optional `audio`, optional `note` -> listing JSON
 - `GET /api/v1/parts` · `GET /api/v1/parts/export?fmt=inventory_csv|ebay_csv|ebay_json`
+- `PATCH /api/v1/parts/{id}` correct part_number/brand/title/price_avg; marks the item confirmed
+- Limits: 5 signups/hour per IP, 30 analyses/minute per key (in-memory; use Redis if you scale out)
 - Set a plan: `Store(path).set_plan("email", "pro")` (until Stripe is wired)
 
 ## Design rules that protect sellers
@@ -55,3 +59,17 @@ Benchmark on **synthetic** label images (`python -m eval.make_synthetic DIR N SE
 
 Latency ~0.2 s/image. Synthetic labels are cleaner than real parts (no glare, grime, curved or
 embossed text), so real-world numbers will be lower. Measure on real photos before trusting it.
+
+### Hard mode (field-like damage: glare, tilt, low-res, heavy JPEG) — 200 synthetic images
+`python -m eval.make_synthetic DIR 200 5 --hard`. Local OCR reads each image twice with different
+preprocessing and publishes a part number only when both passes agree (cut wrong-but-published from 7 to 3).
+
+| Difficulty | P/N correct | Sent to review | Wrong P/N published |
+|---|---|---|---|
+| clean | 68% | 40% | 3 |
+| slight blur | 84% | 42% | 0 |
+| heavy blur / unreadable | 10% / 0% | 100% | 0 |
+
+Remaining failures are consistent truncations/digit slips that survive both passes. That is why the
+PWA shows the part number in an editable field with a "Confirm" button: **a human must check the P/N
+against the label before listing.** Do not auto-publish from OCR output alone.

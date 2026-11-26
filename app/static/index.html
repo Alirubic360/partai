@@ -69,13 +69,22 @@ $("go").onclick=async()=>{const fd=new FormData();fd.append("image",photo);if(vo
     if(!r.ok){$("out").innerHTML='<div class="card">'+esc(j.detail)+'</div>'}else render(j);
     const m=await fetch("/api/v1/me",{headers:H()});if(m.ok)show(await m.json())}
   catch(e){$("out").innerHTML='<div class="card">Network error. Try again.</div>'}$("go").disabled=false};
-function render(j){const p=j.estimated_price_usd,f=j.flags.map(x=>'<span class="flag">'+esc(x)+'</span>').join("");
+let lastId=null;
+function render(j){lastId=j.id;const p=j.estimated_price_usd,f=j.flags.map(x=>'<span class="flag">'+esc(x)+'</span>').join("");
   const warn=j.needs_review?'<div class="banner">Needs review - check the part number before listing. Retake the label photo closer and sharper if it is unreadable.</div>':"";
   $("out").innerHTML='<div class="card">'+warn+'<h3>'+esc(j.listing_title)+'</h3>'
   +'<p>'+esc(j.brand)+' - <b>'+(esc(j.part_number)||"part # unreadable")+'</b> - '+esc(j.condition)+'</p>'
   +'<div class="prices"><div>Quick<b>$'+p.low+'</b></div><div>Market<b>$'+p.avg+'</b></div><div>Premium<b>$'+p.high+'</b></div></div>'
   +'<small>Price confidence: '+esc(j.price_confidence)+' ('+j.price_sample_size+' comps) - '+(j.timings_ms.total/1000).toFixed(1)+'s</small>'
-  +'<p>'+f+'</p><details><summary>Description and JSON</summary><pre>'+esc(j.suggested_description)+'</pre><pre>'+esc(JSON.stringify(j,null,2))+'</pre></details></div>'}
+  +'<p>'+f+'</p>'
+  +'<label class="mut">Part number (check against the label!)</label><input id="pn" type="text" value="'+esc(j.part_number)+'" autocapitalize="characters">'
+  +'<label class="mut">Market price USD</label><input id="pr" type="text" inputmode="decimal" value="'+p.avg+'">'
+  +'<button id="confirm">Confirm / save correction</button><small id="cstat" class="mut"></small>'
+  +'<details><summary>Description and JSON</summary><pre>'+esc(j.suggested_description)+'</pre><pre>'+esc(JSON.stringify(j,null,2))+'</pre></details></div>'}
+document.addEventListener("click",async e=>{if(e.target.id!=="confirm"||!lastId)return;
+  const body={part_number:$("pn").value,price_avg:parseFloat($("pr").value)};
+  const r=await fetch("/api/v1/parts/"+lastId,{method:"PATCH",headers:{...H(),"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j=await r.json();$("cstat").textContent=r.ok?"Saved - confirmed.":(j.detail||"Error")});
 async function dl(fmt,name){const r=await fetch("/api/v1/parts/export?fmt="+fmt,{headers:H()});const b=await r.blob();
   const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click()}
 $("csv").onclick=()=>dl("inventory_csv","partai_inventory.csv");$("ebay").onclick=()=>dl("ebay_csv","partai_ebay.csv");

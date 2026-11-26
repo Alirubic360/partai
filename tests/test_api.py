@@ -60,7 +60,7 @@ def test_analyze_full_flow_and_demo_flag(client):
     r = analyze(client, h, note="tested working")
     assert r.status_code == 200
     j = r.json()
-    assert j["demo"] is True and j["part_number"] == "00145787"
+    assert j["demo"] is True and j["part_number"] == "00145787" and isinstance(j["id"], int)
     assert j["estimated_price_usd"]["low"] <= j["estimated_price_usd"]["high"]
     assert client.get("/api/v1/me", headers=h).json()["used_this_month"] == 1
     assert len(client.get("/api/v1/parts", headers=h).json()) == 1
@@ -132,3 +132,36 @@ def test_live_mode_requires_keys():
     from app.main import build_providers
     with pytest.raises(RuntimeError):
         build_providers(Settings(mode="live"))
+
+
+def test_correction_flow_clears_review(client):
+    from app.providers.demo import DemoVision
+    from app.schemas import VisionResult
+    blurry = VisionResult(part_name="Control Board", brand="Samsung", part_number="",
+                          part_number_confidence=0.2, legibility="blurry")
+    c = TestClient(create_app(Settings(db_path=":memory:"),
+                              Providers(DemoVision(blurry), None, DemoPrices(), demo=True), Store(":memory:", 10)))
+    h = key_for(c)
+    r = analyze(c, h).json()
+    assert r["needs_review"] and r["part_number"] == ""
+    item = c.get("/api/v1/parts", headers=h).json()[0]
+    bad = c.patch(f"/api/v1/parts/{item['id']}", json={"part_number": "x"}, headers=h)
+    assert bad.status_code == 422
+    ok = c.patch(f"/api/v1/parts/{item['id']}", json={"part_number": " dc92-00123a ", "price_avg": 60}, headers=h)
+    j = ok.json()
+    assert j["part_number"] == "DC92-00123A" and j["confirmed"] and not j["needs_review"]
+    assert j["estimated_price_usd"]["avg"] == 60 and j["estimated_price_usd"]["low"] <= 60 <= j["estimated_price_usd"]["high"]
+    assert "DC92-00123A" in c.get("/api/v1/parts/export?fmt=inventory_csv", headers=h).text
+    assert c.patch("/api/v1/parts/9999", json={"brand": "x"}, headers=h).status_code == 404
+    other = key_for(c, "other@x.com")      # another tenant cannot edit it
+    assert c.patch(f"/api/v1/parts/{item['id']}", json={"brand": "x"}, headers=other).status_code == 404
+
+
+def test_rate_limits():
+    cfg = Settings(db_path=":memory:", signup_per_hour=2, analyze_per_minute=2)
+    c = TestClient(create_app(cfg, Providers(DemoVision(), None, DemoPrices(), demo=True), Store(":memory:", 100)))
+    h = key_for(c, "a@x.com")
+    key_for(c, "b@x.com")
+    assert c.post("/api/v1/signup", json={"email": "c@x.com"}).status_code == 429
+    assert analyze(c, h).status_code == 200 and analyze(c, h).status_code == 200
+    assert analyze(c, h).status_code == 429

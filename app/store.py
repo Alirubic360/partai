@@ -86,6 +86,17 @@ class Store:
                              (tenant["id"], datetime.now(timezone.utc).isoformat(), _month(), json.dumps(data)))
             return cur.lastrowid
 
+    def get_item(self, tenant: dict, item_id: int) -> dict | None:
+        with self._tx() as db:
+            r = db.execute("SELECT id,created_at,data FROM items WHERE id=? AND tenant_id=?",
+                           (item_id, tenant["id"])).fetchone()
+        return {"id": r["id"], "created_at": r["created_at"], **json.loads(r["data"])} if r else None
+
+    def update_item(self, tenant: dict, item_id: int, data: dict) -> None:
+        with self._tx() as db:
+            db.execute("UPDATE items SET data=? WHERE id=? AND tenant_id=?",
+                       (json.dumps(data), item_id, tenant["id"]))
+
     def list_items(self, tenant: dict, limit: int = 200) -> list[dict]:
         with self._tx() as db:
             rows = db.execute("SELECT id,created_at,data FROM items WHERE tenant_id=? ORDER BY id DESC LIMIT ?",
