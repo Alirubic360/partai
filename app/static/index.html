@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PartAi - 90-Second Inventory</title>
+<link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#0f172a">
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--fg:#e2e8f0;--mut:#94a3b8;--ac:#38bdf8;--warn:#f59e0b}
+@media(prefers-color-scheme:light){:root{--bg:#f1f5f9;--card:#fff;--fg:#0f172a;--mut:#475569}}
+*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:640px;margin:0 auto;padding:16px}h1{font-size:1.3rem;margin:.2em 0}
+.card{background:var(--card);border-radius:12px;padding:14px;margin:12px 0}
+button,.btn{background:var(--ac);color:#04283b;border:0;border-radius:10px;padding:14px;font-size:1rem;font-weight:600;width:100%;margin:6px 0;cursor:pointer}
+button.sec{background:transparent;color:var(--ac);border:1px solid var(--ac)}button:disabled{opacity:.5}
+input[type=text],input[type=email]{width:100%;padding:12px;border-radius:8px;border:1px solid var(--mut);background:transparent;color:var(--fg);font-size:1rem}
+.flag{background:var(--warn);color:#2b1a00;border-radius:6px;padding:2px 8px;margin:2px;display:inline-block;font-size:.85rem}
+.prices{display:flex;gap:8px}.prices div{flex:1;text-align:center;background:var(--bg);border-radius:8px;padding:8px}
+.prices b{display:block;font-size:1.3rem}small,.mut{color:var(--mut)}pre{white-space:pre-wrap;word-break:break-word}
+img{max-width:100%;border-radius:8px}.banner{background:var(--warn);color:#2b1a00;padding:8px 12px;border-radius:8px}
+</style></head><body><main>
+<h1>PartAi <small>90-Second Inventory</small></h1>
+<div id="demo" class="banner" hidden>DEMO MODE: results are canned samples, not real analysis.</div>
+
+<section id="auth" class="card" hidden>
+  <p>Enter your email to get a free API key (10 parts / month).</p>
+  <input id="email" type="email" placeholder="you@shop.com" autocomplete="email">
+  <button id="signup">Get free key</button>
+  <p class="mut">Already have a key?</p>
+  <input id="key" type="text" placeholder="pk_..."><button class="sec" id="savekey">Use key</button>
+</section>
+
+<section id="app" hidden>
+  <p class="mut" id="usage"></p>
+  <label class="btn" style="display:block;text-align:center">Photograph part / label
+    <input id="photo" type="file" accept="image/*" capture="environment" hidden></label>
+  <img id="preview" alt="Part photo preview" hidden>
+  <button class="sec" id="rec">Record 10s voice note (optional)</button>
+  <small id="recstat" class="mut"></small>
+  <input id="note" type="text" placeholder="or type: tested working, from Bosch series 8 washer">
+  <button id="go" disabled>Analyze part</button>
+  <div id="out"></div>
+  <button class="sec" id="csv">Download inventory CSV</button>
+  <button class="sec" id="ebay">Download eBay CSV</button>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let key=null,photo=null,voice=null;
+try{key=localStorage.getItem("partai_key")}catch(e){}
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const H=()=>({"X-API-Key":key});
+async function init(){
+  const h=await (await fetch("/health")).json(); $("demo").hidden=!h.demo;
+  if(key){const r=await fetch("/api/v1/me",{headers:H()});if(r.ok){show(await r.json());return}key=null}
+  $("auth").hidden=false;$("app").hidden=true;
+}
+function show(u){$("auth").hidden=true;$("app").hidden=false;
+  $("usage").textContent=u.plan+" plan - "+u.used_this_month+" used"+(u.monthly_limit?" / "+u.monthly_limit+" this month":" (unlimited)")}
+function setKey(k){key=k;try{localStorage.setItem("partai_key",k)}catch(e){};init()}
+$("signup").onclick=async()=>{const r=await fetch("/api/v1/signup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("email").value})});
+  const j=await r.json();if(r.ok){alert("Your API key (save it): "+j.api_key);setKey(j.api_key)}else alert(j.detail)};
+$("savekey").onclick=()=>setKey($("key").value.trim());
+$("photo").onchange=e=>{photo=e.target.files[0];if(!photo)return;$("preview").src=URL.createObjectURL(photo);$("preview").hidden=false;$("go").disabled=false};
+$("rec").onclick=async()=>{try{
+  const s=await navigator.mediaDevices.getUserMedia({audio:true});const mr=new MediaRecorder(s);const ch=[];
+  mr.ondataavailable=e=>ch.push(e.data);mr.onstop=()=>{voice=new Blob(ch,{type:mr.mimeType});s.getTracks().forEach(t=>t.stop());$("recstat").textContent="Voice note saved"};
+  mr.start();$("recstat").textContent="Recording... 10s";setTimeout(()=>{if(mr.state!=="inactive")mr.stop()},10000)}catch(e){$("recstat").textContent="Microphone unavailable - type a note instead"}};
+$("go").onclick=async()=>{const fd=new FormData();fd.append("image",photo);if(voice)fd.append("audio",voice,"note.webm");fd.append("note",$("note").value);
+  $("go").disabled=true;$("out").innerHTML='<p class="mut">Analyzing...</p>';
+  try{const r=await fetch("/api/v1/parts/analyze",{method:"POST",headers:H(),body:fd});const j=await r.json();
+    if(!r.ok){$("out").innerHTML='<div class="card">'+esc(j.detail)+'</div>'}else render(j);
+    const m=await fetch("/api/v1/me",{headers:H()});if(m.ok)show(await m.json())}
+  catch(e){$("out").innerHTML='<div class="card">Network error. Try again.</div>'}$("go").disabled=false};
+function render(j){const p=j.estimated_price_usd,f=j.flags.map(x=>'<span class="flag">'+esc(x)+'</span>').join("");
+  const warn=j.needs_review?'<div class="banner">Needs review - check the part number before listing. Retake the label photo closer and sharper if it is unreadable.</div>':"";
+  $("out").innerHTML='<div class="card">'+warn+'<h3>'+esc(j.listing_title)+'</h3>'
+  +'<p>'+esc(j.brand)+' - <b>'+(esc(j.part_number)||"part # unreadable")+'</b> - '+esc(j.condition)+'</p>'
+  +'<div class="prices"><div>Quick<b>$'+p.low+'</b></div><div>Market<b>$'+p.avg+'</b></div><div>Premium<b>$'+p.high+'</b></div></div>'
+  +'<small>Price confidence: '+esc(j.price_confidence)+' ('+j.price_sample_size+' comps) - '+(j.timings_ms.total/1000).toFixed(1)+'s</small>'
+  +'<p>'+f+'</p><details><summary>Description and JSON</summary><pre>'+esc(j.suggested_description)+'</pre><pre>'+esc(JSON.stringify(j,null,2))+'</pre></details></div>'}
+async function dl(fmt,name){const r=await fetch("/api/v1/parts/export?fmt="+fmt,{headers:H()});const b=await r.blob();
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click()}
+$("csv").onclick=()=>dl("inventory_csv","partai_inventory.csv");$("ebay").onclick=()=>dl("ebay_csv","partai_ebay.csv");
+if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+init();
+</script></body></html>
